@@ -1055,20 +1055,6 @@ function renderOverall() {
     <div class="chart-card"><div class="chart-title">Contribuição para a meta (4.800)</div>
       <div style="position:relative;height:220px"><canvas id="ovpct"></canvas></div>
     </div>
-  </div>
-
-  <div class="chart-full" style="background:var(--white);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:20px">
-    <div class="chart-title" style="margin-bottom:12px">Mapa do Rio Grande do Norte — Municípios com areninhas</div>
-    <div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;font-size:12px;color:var(--ts)">
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#085041;margin-right:4px;vertical-align:middle"></span>Fase 1</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#1D9E75;margin-right:4px;vertical-align:middle"></span>Fase 2</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#5DCAA5;margin-right:4px;vertical-align:middle"></span>Fase 3</span>
-      <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#E8F5F0;border:1px solid #ddd;margin-right:4px;vertical-align:middle"></span>Sem areninha</span>
-    </div>
-    <div id="rn-map" style="width:100%;height:440px;position:relative">
-      <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ts);font-size:13px">⏳ Carregando mapa...</div>
-    </div>
-    <div id="map-tooltip" style="position:fixed;background:#1A1A1A;color:#fff;padding:8px 12px;border-radius:8px;font-size:12px;pointer-events:none;opacity:0;transition:opacity .15s;z-index:9999;max-width:220px"></div>
   </div>`;
 
   panel.innerHTML = html;
@@ -1090,173 +1076,12 @@ function renderOverall() {
   },80);
 }
 
-// ── MAPA RN ──────────────────────────────────────────────────
-// Lista completa de cidades com areninhas por fase
-const CIDADES_MAPA = {
-  // Fase 1
-  'Afonso Bezerra':1,'Angicos':1,'Currais Novos':1,'Doutor Severiano':1,
-  'Japi':1,'Poço Branco':1,'São Gonçalo do Amarante':1,
-  'Tenente Laurentino Cruz':1,'Umarizal':1,'Vera Cruz':1,
-  // Fase 2
-  'Apodi':2,'Caicó':2,'Caraúbas':2,'Carnaúba dos Dantas':2,
-  'Jardim de Piranhas':2,'Jardim do Seridó':2,'Lucrécia':2,
-  'Macau':2,'Messias Targino':2,'Mossoró':2,'Santo Antônio':2,
-  'São Gonçalo do Amarante':1, // já está na fase 1
-  'Upanema':2,
-  // Fase 3
-  'Acari':3,'Campo Grande':3,'Ipanguaçu':3,'Janduís':3,
-  'Martins':3,'Santa Maria':3,'São Fernando':3,'Sítio Novo':3,
-  'Taboleiro Grande':3,'Natal':3,
-};
-
-// Cores por fase
-const FASE_CORES = { 1:'#085041', 2:'#1D9E75', 3:'#5DCAA5' };
-
-function normalizeCity(name) {
-  return (name||'').toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .replace(/\s+/g,' ').trim();
-}
-
-const CIDADES_NORM = {};
-Object.entries(CIDADES_MAPA).forEach(([name, fase]) => {
-  CIDADES_NORM[normalizeCity(name)] = fase;
-});
-
-function buildCidadesNormFromData() {
-  const map = {};
-  [1,2,3].forEach(p => {
-    DATA[p].cities.forEach(c => {
-      map[normalizeCity(c.name)] = { fase: p, city: c };
-    });
-  });
-  return map;
-}
-
-function getMapColor(fase) {
-  return FASE_CORES[fase] || '#E8F5F0';
-}
-
-async function renderMap() {
-  const container = document.getElementById('rn-map');
-  if (!container) return;
-
-  // Evita re-render se já tem SVG desenhado
-  if (container.querySelector('svg')) return;
-
-  // Aguarda container estar visível com dimensões reais
-  let w = container.offsetWidth;
-  let h = container.offsetHeight;
-  if (w === 0 || h === 0) {
-    setTimeout(renderMap, 200);
-    return;
-  }
-
-  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ts);font-size:13px">⏳ Carregando mapa...</div>';
-
-  // Carrega D3 se necessário
-  if (!window.d3) {
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-  }
-
-  // Tenta múltiplas fontes do GeoJSON
-  const GEOJSON_URLS = [
-    'https://servicodados.ibge.gov.br/api/v3/malhas/estados/24?formato=application/vnd.geo+json&resolucao=5',
-    'https://raw.githubusercontent.com/tbrugz/geodata-br/master/geojson/geojs-24-mun.json',
-  ];
-
-  let geojson = null;
-  for (const url of GEOJSON_URLS) {
-    try {
-      const r = await fetch(url);
-      if (r.ok) { geojson = await r.json(); break; }
-    } catch(e) { continue; }
-  }
-
-  if (!geojson) {
-    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-size:13px;text-align:center;padding:20px">Não foi possível carregar o mapa.<br>Verifique a conexão com a internet.</div>';
-    return;
-  }
-
-  const cidadesNorm = buildCidadesNormFromData();
-  const tooltip = document.getElementById('map-tooltip');
-
-  // Re-lê dimensões pois pode ter mudado
-  w = container.offsetWidth;
-  h = container.offsetHeight;
-
-  container.innerHTML = '';
-  const svg = d3.select(container).append('svg')
-    .attr('width', w).attr('height', h)
-    .style('display', 'block');
-
-  const projection = d3.geoMercator().fitSize([w - 10, h - 10], geojson);
-  const pathGen = d3.geoPath().projection(projection);
-
-  function getCityData(feature) {
-    const nome = normalizeCity(
-      feature.properties.name ||
-      feature.properties.Name ||
-      feature.properties.NM_MUN ||
-      feature.properties.nome || ''
-    );
-    return cidadesNorm[nome] || (CIDADES_NORM[nome] ? { fase: CIDADES_NORM[nome], city: null } : null);
-  }
-
-  svg.selectAll('path')
-    .data(geojson.features || [geojson])
-    .enter().append('path')
-    .attr('d', pathGen)
-    .attr('fill', d => {
-      const info = getCityData(d);
-      return info ? getMapColor(info.fase) : '#E8F5F0';
-    })
-    .attr('stroke', '#fff')
-    .attr('stroke-width', 0.6)
-    .style('cursor', d => getCityData(d) ? 'pointer' : 'default')
-    .on('mousemove', function(event, d) {
-      const info = getCityData(d);
-      const nome = d.properties.name || d.properties.Name || d.properties.NM_MUN || d.properties.nome || '';
-      if (info) {
-        const city = info.city;
-        let details = '';
-        if (city) {
-          details = `<div style="margin-top:4px;font-size:11px;opacity:.85">
-            Society: ${city.society} · Física: ${city.fisica}<br>
-            Total: <strong>${city.total}</strong> · Meta: ${Math.round(city.total/META_ARENINHA*100)}%
-          </div>`;
-        }
-        tooltip.innerHTML = `<strong>${nome}</strong><div style="font-size:11px;margin-top:2px;opacity:.8">Fase ${info.fase}</div>${details}`;
-      } else {
-        tooltip.innerHTML = `<span style="opacity:.7">${nome}</span>`;
-      }
-      tooltip.style.opacity = '1';
-      tooltip.style.left = (event.clientX + 14) + 'px';
-      tooltip.style.top  = (event.clientY - 10) + 'px';
-    })
-    .on('mouseleave', () => { tooltip.style.opacity = '0'; })
-    .on('click', (event, d) => {
-      const info = getCityData(d);
-      if (info) showPhase(info.fase);
-    });
-}
-
 // ── NAVEGAÇÃO ────────────────────────────────────────────────
 function showPhase(phase) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',[1,2,3,0][i]===phase));
   document.getElementById('panel-'+phase).classList.add('active');
-  if (phase === 0) {
-    renderOverall();
-    setTimeout(renderMap, 300);
-  } else {
-    renderPhase(phase);
-  }
+  phase===0?renderOverall():renderPhase(phase);
 }
 
 // ── RELATÓRIO EXECUTIVO PDF ──────────────────────────────────
