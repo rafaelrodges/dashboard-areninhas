@@ -204,18 +204,18 @@ tr.total-row td { font-weight:700; background:var(--gbg); }
 
 <div class="tabs-wrap">
   <div class="tabs">
-    <button class="tab active" onclick="showPhase(1)">Fase 1</button>
+    <button class="tab active" onclick="showPhase(0)">Visão Geral</button>
+    <button class="tab" onclick="showPhase(1)">Fase 1</button>
     <button class="tab" onclick="showPhase(2)">Fase 2</button>
     <button class="tab" onclick="showPhase(3)">Fase 3</button>
-    <button class="tab" onclick="showPhase(0)">Visão Geral</button>
   </div>
 </div>
 
 <div class="content">
-  <div id="panel-1" class="panel active"></div>
+  <div id="panel-0" class="panel active"></div>
+  <div id="panel-1" class="panel"></div>
   <div id="panel-2" class="panel"></div>
   <div id="panel-3" class="panel"></div>
-  <div id="panel-0" class="panel"></div>
 </div>
 
 <div id="toast">Salvo!</div>
@@ -1274,124 +1274,103 @@ function getMapColor(fase) {
   return FASE_CORES[fase] || '#E8F5F0';
 }
 
-async function renderMap() {
-  const container = document.getElementById('rn-map');
-  if (!container) return;
+// Cache do GeoJSON — carrega uma vez, reutiliza sempre
+let _cachedGeojson = null;
+let _cachedNameKey = null;
 
-  // Evita re-render se já tem SVG desenhado
-  if (container.querySelector('svg')) return;
-
-  // Aguarda container estar visível com dimensões reais
-  let w = container.offsetWidth;
-  let h = container.offsetHeight;
-  if (w === 0 || h === 0) {
-    setTimeout(renderMap, 200);
-    return;
-  }
-
-  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ts);font-size:13px">⏳ Carregando mapa...</div>';
-
-  // Carrega D3 se necessário
+async function loadMapData() {
+  if (_cachedGeojson) return true;
   if (!window.d3) {
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js';
-      s.onload = res; s.onerror = rej;
+    await new Promise(function(res,rej){
+      var s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js';
+      s.onload=res; s.onerror=rej;
       document.head.appendChild(s);
     });
   }
-
-  // Tenta múltiplas fontes do GeoJSON de municípios do RN
-  const GEOJSON_URLS = [
+  var urls=[
     'https://servicodados.ibge.gov.br/api/v3/malhas/estados/24/municipios?formato=application/vnd.geo+json&resolucao=5',
     'https://raw.githubusercontent.com/tbrugz/geodata-br/master/geojson/geojs-24-mun.json',
-    'https://raw.githubusercontent.com/luizpedone/municipal-brazilian-geodata/master/data/RN.json',
+    'https://raw.githubusercontent.com/luizpedone/municipal-brazilian-geodata/master/data/RN.json'
   ];
+  for(var i=0;i<urls.length;i++){
+    try{
+      var r=await fetch(urls[i]);
+      if(r.ok){
+        var gj=await r.json();
+        if(gj&&gj.features&&gj.features.length>0){
+          _cachedGeojson=gj;
+          var sp=gj.features[0].properties||{};
+          _cachedNameKey=['name','Name','NM_MUN','nome','NOME','municipio','MUNICIPIO','NM_MUNICIP'].find(function(k){return sp[k];})||Object.keys(sp)[0];
+          return true;
+        }
+      }
+    }catch(e){continue;}
+  }
+  return false;
+}
 
-  let geojson = null;
-  for (const url of GEOJSON_URLS) {
-    try {
-      const r = await fetch(url);
-      if (r.ok) { geojson = await r.json(); break; }
-    } catch(e) { continue; }
+function drawMap(container) {
+  if(!_cachedGeojson||!window.d3) return;
+  var w=container.offsetWidth, h=container.offsetHeight;
+  if(w===0||h===0) return;
+  container.innerHTML='';
+  var svg=d3.select(container).append('svg').attr('width',w).attr('height',h).style('display','block');
+  var projection=d3.geoMercator().fitSize([w-10,h-10],_cachedGeojson);
+  var pathGen=d3.geoPath().projection(projection);
+  var cidadesNorm=buildCidadesNormFromData();
+  var tooltip=document.getElementById('map-tooltip');
+
+  function getMunName(f){ return f.properties[_cachedNameKey]||''; }
+  function getCityData(f){
+    var nome=normalizeCity(getMunName(f));
+    return cidadesNorm[nome]||(CIDADES_NORM[nome]?{fase:CIDADES_NORM[nome],city:null}:null);
   }
 
-  if (!geojson || !geojson.features || geojson.features.length === 0) {
-    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-size:13px;text-align:center;padding:20px">Não foi possível carregar o mapa.<br>Verifique a conexão com a internet.</div>';
+  svg.selectAll('path').data(_cachedGeojson.features).enter().append('path')
+    .attr('d',pathGen)
+    .attr('fill',function(d){ var info=getCityData(d); return info?getMapColor(info.fase):'#E8F5F0'; })
+    .attr('stroke','#fff').attr('stroke-width',0.6)
+    .style('cursor',function(d){ return getCityData(d)?'pointer':'default'; })
+    .on('mousemove',function(event,d){
+      var info=getCityData(d), nome=getMunName(d);
+      if(info){
+        var city=info.city, details='';
+        if(city) details='<div style="margin-top:4px;font-size:11px;opacity:.85">Society: '+city.society+' · Física: '+city.fisica+'<br>Total: <strong>'+city.total+'</strong> · Meta: '+Math.round(city.total/META_ARENINHA*100)+'%</div>';
+        tooltip.innerHTML='<strong>'+nome+'</strong><div style="font-size:11px;margin-top:2px;opacity:.8">Fase '+info.fase+'</div>'+details;
+      } else {
+        tooltip.innerHTML='<span style="opacity:.7">'+nome+'</span>';
+      }
+      tooltip.style.opacity='1';
+      tooltip.style.left=(event.clientX+14)+'px';
+      tooltip.style.top=(event.clientY-10)+'px';
+    })
+    .on('mouseleave',function(){ tooltip.style.opacity='0'; })
+    .on('click',function(event,d){ var info=getCityData(d); if(info) showPhase(info.fase); });
+}
+
+async function renderMap() {
+  var container=document.getElementById('rn-map');
+  if(!container) return;
+  // Já tem SVG? Redesenha apenas se dados mudaram (limpa e refaz)
+  if(container.querySelector('svg')&&_cachedGeojson){ drawMap(container); return; }
+  if(container.offsetWidth===0||container.offsetHeight===0){ setTimeout(renderMap,200); return; }
+  // GeoJSON já em cache: desenha direto
+  if(_cachedGeojson){ drawMap(container); return; }
+  // Primeira carga
+  container.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ts);font-size:13px">⏳ Carregando mapa...</div>';
+  var ok=await loadMapData();
+  if(!ok){
+    container.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-size:13px;text-align:center;padding:20px">Não foi possível carregar o mapa.<br>Verifique a conexão.</div>';
     return;
   }
-
-  // Detecta automaticamente qual propriedade contém o nome do município
-  const sampleProps = geojson.features[0]?.properties || {};
-  const nameKey = ['name','Name','NM_MUN','nome','NOME','municipio','MUNICIPIO','NM_MUNICIP']
-    .find(k => sampleProps[k]) || Object.keys(sampleProps)[0];
-
-  const cidadesNorm = buildCidadesNormFromData();
-  const tooltip = document.getElementById('map-tooltip');
-
-  // Re-lê dimensões pois pode ter mudado
-  w = container.offsetWidth;
-  h = container.offsetHeight;
-
-  container.innerHTML = '';
-  const svg = d3.select(container).append('svg')
-    .attr('width', w).attr('height', h)
-    .style('display', 'block');
-
-  const projection = d3.geoMercator().fitSize([w - 10, h - 10], geojson);
-  const pathGen = d3.geoPath().projection(projection);
-
-  function getMunName(feature) {
-    return feature.properties[nameKey] || '';
-  }
-
-  function getCityData(feature) {
-    const nome = normalizeCity(getMunName(feature));
-    return cidadesNorm[nome] || (CIDADES_NORM[nome] ? { fase: CIDADES_NORM[nome], city: null } : null);
-  }
-
-  svg.selectAll('path')
-    .data(geojson.features)
-    .enter().append('path')
-    .attr('d', pathGen)
-    .attr('fill', d => {
-      const info = getCityData(d);
-      return info ? getMapColor(info.fase) : '#E8F5F0';
-    })
-    .attr('stroke', '#fff')
-    .attr('stroke-width', 0.6)
-    .style('cursor', d => getCityData(d) ? 'pointer' : 'default')
-    .on('mousemove', function(event, d) {
-      const info = getCityData(d);
-      const nome = getMunName(d);
-      if (info) {
-        const city = info.city;
-        let details = '';
-        if (city) {
-          details = `<div style="margin-top:4px;font-size:11px;opacity:.85">
-            Society: ${city.society} · Física: ${city.fisica}<br>
-            Total: <strong>${city.total}</strong> · Meta: ${Math.round(city.total/META_ARENINHA*100)}%
-          </div>`;
-        }
-        tooltip.innerHTML = `<strong>${nome}</strong><div style="font-size:11px;margin-top:2px;opacity:.8">Fase ${info.fase}</div>${details}`;
-      } else {
-        tooltip.innerHTML = `<span style="opacity:.7">${nome}</span>`;
-      }
-      tooltip.style.opacity = '1';
-      tooltip.style.left = (event.clientX + 14) + 'px';
-      tooltip.style.top  = (event.clientY - 10) + 'px';
-    })
-    .on('mouseleave', () => { tooltip.style.opacity = '0'; })
-    .on('click', (event, d) => {
-      const info = getCityData(d);
-      if (info) showPhase(info.fase);
-    });
+  drawMap(container);
 }
 
 // ── NAVEGAÇÃO ────────────────────────────────────────────────
 function showPhase(phase) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',[1,2,3,0][i]===phase));
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',[0,1,2,3][i]===phase));
   document.getElementById('panel-'+phase).classList.add('active');
   if (phase === 0) {
     renderOverall();
@@ -1677,8 +1656,8 @@ async function exportPDF() {
 // ── INIT ─────────────────────────────────────────────────────
 loadExtra();
 renderGlobalProgress();
-renderPhase(1);
-// Carrega dados atualizados das planilhas automaticamente
+renderOverall();
+setTimeout(renderMap, 300);
 loadFromAPI();
 </script>
 </body>
