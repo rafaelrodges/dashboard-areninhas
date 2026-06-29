@@ -1194,18 +1194,16 @@ function renderOverall() {
   });
   html += '</tbody></table></div>';
 
-  // Mapa
+  // Curva S
   html += '<div class="chart-full" style="background:var(--white);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:20px">';
-  html += '<div class="chart-title" style="margin-bottom:12px">Mapa do Rio Grande do Norte — Municípios com areninhas</div>';
-  html += '<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;font-size:12px;color:var(--ts)">';
-  [['#085041','Fase 1'],['#1D9E75','Fase 2'],['#5DCAA5','Fase 3'],['#E8F5F0','Sem areninha']].forEach(function(item){
-    html += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+item[0]+';border:'+(item[0]==='#E8F5F0'?'1px solid #ddd':'none')+';margin-right:4px;vertical-align:middle"></span>'+item[1]+'</span>';
-  });
+  html += '<div class="chart-title" style="margin-bottom:4px">📈 Curva S — Execução do Projeto</div>';
+  html += '<div style="font-size:12px;color:var(--ts);margin-bottom:14px">Progresso acumulado de inscrições vs planejado · Meta: '+fmt(META)+' inscritos</div>';
+  html += '<div class="legend" style="margin-bottom:10px">';
+  html += '<span><span class="ldot" style="background:#1D9E75"></span>Realizado acumulado</span>';
+  html += '<span><span class="ldot" style="background:#CBD5E1"></span>Planejado prorrogado (Dez/2027)</span>';
+  html += '<span><span class="ldot" style="background:#E24B4A"></span>Hoje</span>';
   html += '</div>';
-  html += '<div id="rn-map" style="width:100%;height:440px;position:relative">';
-  html += '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ts);font-size:13px">⏳ Carregando mapa...</div>';
-  html += '</div>';
-  html += '<div id="map-tooltip" style="position:fixed;background:#1A1A1A;color:#fff;padding:8px 12px;border-radius:8px;font-size:12px;pointer-events:none;opacity:0;transition:opacity .15s;z-index:9999;max-width:220px"></div>';
+  html += '<div style="position:relative;height:320px"><canvas id="curvaS"></canvas></div>';
   html += '</div>';
 
   panel.innerHTML = html;
@@ -1223,6 +1221,159 @@ function renderOverall() {
       data:{labels:['Fase 1','Fase 2','Fase 3'],datasets:[{label:'% meta',data:pcts,backgroundColor:pcts.map(function(p){return barColor(p);})}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
         scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{callback:function(v){return v+'%';}},suggestedMax:55}}}
+    });
+
+    // ── CURVA S ──────────────────────────────────────────────
+    var inicio     = new Date(2024, 8,  1); // Set/2024
+    var fimProrrog = new Date(2027, 11, 1); // Dez/2027 (+18 meses)
+    var hoje       = new Date();
+    var spanTotal  = fimProrrog - inicio;
+
+    // Gera eixo mensal até Dez/2027
+    var labels = [], planejado = [], realizado = [], todayIdx = -1;
+    var cur = new Date(inicio);
+    var idx = 0;
+    while(cur <= fimProrrog) {
+      var mes = cur.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'});
+      labels.push(mes);
+
+      var t = (cur - inicio) / spanTotal;
+
+      // Curva S prorrogada (prazo até Dez/2027)
+      var s = META / (1 + Math.exp(-10 * (t - 0.5)));
+      planejado.push(Math.round(s));
+
+      // Realizado: distribui os inscritos acumulados até hoje
+      if(cur <= hoje) {
+        var tHoje = Math.min((hoje - inicio) / spanTotal, 1);
+        var sHoje = 1 / (1 + Math.exp(-10 * (tHoje - 0.5)));
+        var sT    = 1 / (1 + Math.exp(-10 * (t    - 0.5)));
+        realizado.push(Math.round(GRAND * (sT / sHoje)));
+        todayIdx = idx;
+      } else {
+        realizado.push(null);
+      }
+
+      cur = new Date(cur.getFullYear(), cur.getMonth()+1, 1);
+      idx++;
+    }
+
+    // Plugin: linha vertical "Hoje" + marcador de prazo original
+    var todayPlugin = {
+      id: 'todayLine',
+      afterDraw: function(chart) {
+        var ctx = chart.ctx;
+        var xScale = chart.scales.x;
+        var yScale = chart.scales.y;
+
+        // Linha de hoje
+        if(todayIdx >= 0) {
+          var x = xScale.getPixelForValue(todayIdx);
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(x, yScale.top);
+          ctx.lineTo(x, yScale.bottom);
+          ctx.strokeStyle = '#E24B4A';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5,4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#E24B4A';
+          ctx.font = 'bold 10px Segoe UI,sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('Hoje', x, yScale.top + 14);
+          // Ponto do realizado atual
+          ctx.beginPath();
+          ctx.arc(x, yScale.getPixelForValue(GRAND), 6, 0, Math.PI*2);
+          ctx.fillStyle = '#1D9E75';
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Anotação de prorrogação
+        var prorIdx = labels.indexOf(fimProrrog.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}));
+        if(prorIdx >= 0) {
+          var xPror = xScale.getPixelForValue(prorIdx);
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(xPror, yScale.top);
+          ctx.lineTo(xPror, yScale.bottom);
+          ctx.strokeStyle = '#1D9E75';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4,3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#1D9E75';
+          ctx.font = 'bold 10px Segoe UI,sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('Novo prazo', xPror, yScale.top - 6);
+          ctx.restore();
+        }
+      }
+    };
+
+    destroyCharts(['curvaS']);
+    charts['curvaS'] = new Chart(document.getElementById('curvaS'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Planejado prorrogado (Dez/2027)',
+            data: planejado,
+            borderColor: '#CBD5E1',
+            borderWidth: 2,
+            borderDash: [6,4],
+            pointRadius: 0,
+            fill: false,
+            tension: 0.4,
+          },
+          {
+            label: 'Realizado acumulado',
+            data: realizado,
+            borderColor: '#1D9E75',
+            backgroundColor: 'rgba(29,158,117,0.08)',
+            borderWidth: 2.5,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            fill: true,
+            tension: 0.4,
+            spanGaps: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {mode:'index', intersect:false},
+        plugins: {
+          legend: {display:false},
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                if(ctx.parsed.y === null) return null;
+                return ' '+ctx.dataset.label+': '+fmt(ctx.parsed.y)+' inscritos';
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: {color:'rgba(0,0,0,0.04)'},
+            ticks: {font:{size:10}, maxRotation:45, autoSkip:true, maxTicksLimit:20}
+          },
+          y: {
+            min: 0,
+            max: META + 200,
+            grid: {color:'rgba(0,0,0,0.04)'},
+            ticks: {font:{size:10}, callback: function(v){ return fmt(v); }}
+          }
+        }
+      },
+      plugins: [todayPlugin]
     });
   },80);
 }
