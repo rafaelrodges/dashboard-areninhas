@@ -1016,50 +1016,201 @@ function renderOverall() {
   const pcts   =phases.map(p=>pct(DATA[p].grand,META));
   const cities =phases.map(p=>DATA[p].cities.length);
 
-  let html = `<div class="metrics">
-    <div class="metric"><div class="metric-label">Total geral</div>
-      <div class="metric-value ${pctClass(GRAND_PCT)}">${fmt(GRAND)}</div>
-      <div class="metric-sub">${GRAND_PCT}% · faltam ${fmt(META-GRAND)}</div></div>
-    ${phases.map((p,i)=>`<div class="metric"><div class="metric-label">Fase ${p}</div>
-      <div class="metric-value">${fmt(totals[i])}</div>
-      <div class="metric-sub">${pcts[i]}% da meta total</div></div>`).join('')}
-  </div>`;
+  // Cálculos globais
+  const todasCidades = [1,2,3].flatMap(p => DATA[p].cities.map(c => Object.assign({}, c, {fase:p})));
+  const comInscricoes = todasCidades.filter(c => c.total > 0);
 
-  phases.forEach((p,i)=>{
-    const w=Math.min(pcts[i],100);
-    html+=`<div class="ov-phase">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <span style="font-size:15px;font-weight:600">Fase ${p} — ${cities[i]} cidades</span>
-        <span style="font-size:14px;font-weight:700;color:${textColor(pcts[i])}">${pcts[i]}% da meta total</span>
-      </div>
-      <div style="display:flex;align-items:center">
-        <span style="font-size:13px;color:var(--ts);min-width:60px">${fmt(totals[i])}</span>
-        <div class="ov-bar-bg"><div class="ov-bar-fill" style="width:${w}%;background:${barColor(pcts[i])}"></div></div>
-        <span style="font-size:12px;color:var(--ts);min-width:70px;text-align:right">/${fmt(META)}</span>
-      </div>
-      <div style="display:flex;gap:16px;font-size:12px;color:var(--ts);margin-top:8px">
-        <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#1D9E75;margin-right:4px"></span>Society: ${society[i]}</span>
-        <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#5DCAA5;margin-right:4px"></span>Física: ${fisica[i]}</span>
-      </div>
-    </div>`;
+  const ranking = comInscricoes.slice().sort(function(a,b){
+    return Math.round(b.total/META_ARENINHA*100) - Math.round(a.total/META_ARENINHA*100);
+  });
+  const top5    = ranking.slice(0,5);
+  const bottom5 = ranking.slice().reverse().slice(0,5);
+
+  const totalAtivas      = todasCidades.filter(c => { var s=(c.status||'').toLowerCase(); return !s||s.includes('ativ')||s==='ok'; }).length;
+  const totalDesativadas = todasCidades.filter(c => (c.status||'').toLowerCase().includes('desativ')).length;
+  const totalSuspensas   = todasCidades.filter(c => (c.status||'').toLowerCase().includes('suspens')).length;
+  const txAtivacao       = Math.round(totalAtivas/todasCidades.length*100);
+
+  const emRisco = todasCidades.filter(function(c){
+    var cp = Math.round(c.total/META_ARENINHA*100);
+    var e  = extra[c.id]||{};
+    var tp = timePct(e.inicio, e.fim);
+    return cp < 60 && tp !== null && tp >= 50 && tp < 100;
   });
 
-  html+=`<div class="charts-row">
-    <div class="chart-card"><div class="chart-title">Inscrições por fase</div>
-      <div class="legend">
-        <span><span class="ldot" style="background:#1D9E75"></span>Society</span>
-        <span><span class="ldot" style="background:#5DCAA5"></span>Atv. Física</span>
-      </div>
-      <div style="position:relative;height:220px"><canvas id="ovbar"></canvas></div>
-    </div>
-    <div class="chart-card"><div class="chart-title">Contribuição para a meta (4.800)</div>
-      <div style="position:relative;height:220px"><canvas id="ovpct"></canvas></div>
-    </div>
-  </div>`;
+  const desequilibrio = comInscricoes.map(function(c){
+    return Object.assign({},c,{diff:Math.abs(c.society-c.fisica)});
+  }).sort(function(a,b){return b.diff-a.diff;}).slice(0,5);
+
+  const inicio = new Date(2024,8,1);
+  const hoje   = new Date();
+  const diasDecorridos = Math.max(1, Math.round((hoje-inicio)/86400000));
+  const ritmo  = GRAND/diasDecorridos;
+  const diasRestantes = Math.ceil((META-GRAND)/Math.max(ritmo,0.1));
+  const dataProj = new Date(hoje.getTime()+diasRestantes*86400000);
+  const projStr  = dataProj.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+
+  var html = '';
+
+  // Métricas principais
+  html += '<div class="metrics">';
+  html += '<div class="metric"><div class="metric-label">Total geral</div>';
+  html += '<div class="metric-value '+pctClass(GRAND_PCT)+'">'+fmt(GRAND)+'</div>';
+  html += '<div class="metric-sub">'+GRAND_PCT+'% · faltam '+fmt(META-GRAND)+'</div></div>';
+  phases.forEach(function(p,i){
+    html += '<div class="metric"><div class="metric-label">Fase '+p+'</div>';
+    html += '<div class="metric-value">'+fmt(totals[i])+'</div>';
+    html += '<div class="metric-sub">'+pcts[i]+'% da meta total</div></div>';
+  });
+  html += '</div>';
+
+  // Barras por fase
+  phases.forEach(function(p,i){
+    var w = Math.min(pcts[i],100);
+    html += '<div class="ov-phase">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+    html += '<span style="font-size:15px;font-weight:600">Fase '+p+' — '+cities[i]+' cidades</span>';
+    html += '<span style="font-size:14px;font-weight:700;color:'+textColor(pcts[i])+'">'+pcts[i]+'% da meta total</span></div>';
+    html += '<div style="display:flex;align-items:center">';
+    html += '<span style="font-size:13px;color:var(--ts);min-width:60px">'+fmt(totals[i])+'</span>';
+    html += '<div class="ov-bar-bg"><div class="ov-bar-fill" style="width:'+w+'%;background:'+barColor(pcts[i])+'"></div></div>';
+    html += '<span style="font-size:12px;color:var(--ts);min-width:70px;text-align:right">/'+fmt(META)+'</span></div>';
+    html += '<div style="display:flex;gap:16px;font-size:12px;color:var(--ts);margin-top:8px">';
+    html += '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#1D9E75;margin-right:4px"></span>Society: '+society[i]+'</span>';
+    html += '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#5DCAA5;margin-right:4px"></span>Física: '+fisica[i]+'</span>';
+    html += '</div></div>';
+  });
+
+  // Gráficos
+  html += '<div class="charts-row">';
+  html += '<div class="chart-card"><div class="chart-title">Inscrições por fase</div>';
+  html += '<div class="legend"><span><span class="ldot" style="background:#1D9E75"></span>Society</span>';
+  html += '<span><span class="ldot" style="background:#5DCAA5"></span>Atv. Física</span></div>';
+  html += '<div style="position:relative;height:220px"><canvas id="ovbar"></canvas></div></div>';
+  html += '<div class="chart-card"><div class="chart-title">Contribuição para a meta (4.800)</div>';
+  html += '<div style="position:relative;height:220px"><canvas id="ovpct"></canvas></div></div>';
+  html += '</div>';
+
+  // ── INDICADORES DE GESTÃO ──
+  html += '<div class="chart-card" style="margin-bottom:20px">';
+  html += '<div class="chart-title" style="margin-bottom:14px">📊 Indicadores de Gestão</div>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">';
+
+  var cards = [
+    {bg:'var(--gbg)', tc:textColor(txAtivacao), label:'Taxa de Ativação', val:txAtivacao+'%', sub:totalAtivas+' de '+todasCidades.length+' areninhas'},
+    {bg:'#D1FAE5',    tc:'#065F46',  label:'Ativas',      val:totalAtivas,      sub:Math.round(totalAtivas/todasCidades.length*100)+'% do total'},
+    {bg:'#FEF3C7',    tc:'#92400E',  label:'Suspensas',   val:totalSuspensas,   sub:Math.round(totalSuspensas/todasCidades.length*100)+'% do total'},
+    {bg:'#F3F4F6',    tc:'#374151',  label:'Desativadas', val:totalDesativadas, sub:Math.round(totalDesativadas/todasCidades.length*100)+'% do total'},
+    {bg:'#FEE2E2',    tc:'#991B1B',  label:'Em risco ⚠️', val:emRisco.length,   sub:emRisco.length>0?'abaixo da meta no prazo':'nenhuma em risco'},
+    {bg:'var(--gbg)', tc:'var(--tp)', label:'Projeção meta', val:projStr, sub:fmt(Math.round(ritmo*30))+'/mês no ritmo atual', small:true},
+  ];
+  cards.forEach(function(c){
+    html += '<div style="background:'+c.bg+';border-radius:8px;padding:12px 14px;text-align:center">';
+    html += '<div style="font-size:11px;color:'+c.tc+';text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;opacity:.8">'+c.label+'</div>';
+    html += '<div style="font-size:'+(c.small?'15':'24')+'px;font-weight:700;color:'+c.tc+'">'+c.val+'</div>';
+    html += '<div style="font-size:11px;color:'+c.tc+';margin-top:2px;opacity:.8">'+c.sub+'</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Alerta em risco
+  if(emRisco.length > 0){
+    html += '<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px 14px">';
+    html += '<div style="font-size:12px;font-weight:600;color:#991B1B;margin-bottom:8px">⚠️ Areninhas em risco — abaixo de 60% com mais de metade do período decorrido</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+    emRisco.forEach(function(c){
+      html += '<span style="background:#fff;border:1px solid #FECACA;border-radius:20px;padding:3px 12px;font-size:12px;color:#991B1B">Fase '+c.fase+' · '+c.name+' ('+Math.round(c.total/META_ARENINHA*100)+'%)</span>';
+    });
+    html += '</div></div>';
+  } else {
+    html += '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:10px 14px;font-size:12px;color:#065F46">✅ Nenhuma areninha em situação de risco no momento.</div>';
+  }
+  html += '</div>';
+
+  // ── ANÁLISE DE DESEMPENHO ──
+  html += '<div class="charts-row" style="margin-bottom:20px">';
+
+  // Top 5
+  html += '<div class="chart-card"><div class="chart-title" style="margin-bottom:12px">🏆 Top 5 — Melhores desempenhos</div>';
+  top5.forEach(function(c,i){
+    var cp = Math.round(c.total/META_ARENINHA*100);
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+    html += '<span style="font-size:16px;font-weight:700;color:var(--ts);min-width:20px">'+(i+1)+'</span>';
+    html += '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--tp)">'+c.name+'</div>';
+    html += '<div style="font-size:11px;color:var(--ts)">Fase '+c.fase+' · '+c.total+' inscritos</div></div>';
+    html += '<div style="text-align:right"><div style="font-size:14px;font-weight:700;color:'+textColor(cp)+'">'+cp+'%</div>';
+    html += '<div style="background:var(--border);border-radius:4px;height:5px;width:80px;margin-top:3px">';
+    html += '<div style="background:'+barColor(cp)+';border-radius:4px;height:5px;width:'+Math.min(cp,100)+'%"></div></div>';
+    html += '</div></div>';
+  });
+  html += '</div>';
+
+  // Bottom 5
+  html += '<div class="chart-card"><div class="chart-title" style="margin-bottom:12px">📉 Bottom 5 — Precisam de atenção</div>';
+  bottom5.forEach(function(c,i){
+    var cp = Math.round(c.total/META_ARENINHA*100);
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+    html += '<span style="font-size:16px;font-weight:700;color:var(--ts);min-width:20px">'+(i+1)+'</span>';
+    html += '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--tp)">'+c.name+'</div>';
+    html += '<div style="font-size:11px;color:var(--ts)">Fase '+c.fase+' · '+c.total+' inscritos</div></div>';
+    html += '<div style="text-align:right"><div style="font-size:14px;font-weight:700;color:'+textColor(cp)+'">'+cp+'%</div>';
+    html += '<div style="background:var(--border);border-radius:4px;height:5px;width:80px;margin-top:3px">';
+    html += '<div style="background:'+barColor(cp)+';border-radius:4px;height:5px;width:'+Math.min(cp,100)+'%"></div></div>';
+    html += '</div></div>';
+  });
+  html += '</div>';
+  html += '</div>';
+
+  // Desequilíbrio
+  html += '<div class="chart-card" style="margin-bottom:20px">';
+  html += '<div class="chart-title" style="margin-bottom:6px">⚖️ Desequilíbrio Society vs Atv. Física — Top 5</div>';
+  html += '<div style="font-size:12px;color:var(--ts);margin-bottom:12px">Areninhas com maior diferença entre modalidades</div>';
+  html += '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+  html += '<thead><tr>';
+  ['Cidade','Fase','Society','Física','Diferença','Distribuição'].forEach(function(h,i){
+    var align = i>1?'right':'left';
+    if(i===5) align='left';
+    html += '<th style="text-align:'+align+';padding:6px 8px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;border-bottom:2px solid var(--border)">'+h+'</th>';
+  });
+  html += '</tr></thead><tbody>';
+  desequilibrio.forEach(function(c,i){
+    var tot  = c.society+c.fisica;
+    var pSoc = tot>0?Math.round(c.society/tot*100):50;
+    var pFis = 100-pSoc;
+    var lider = c.society>c.fisica?'Society':'Física';
+    var corL  = c.society>c.fisica?'#1D9E75':'#5DCAA5';
+    html += '<tr style="border-bottom:1px solid var(--border)">';
+    html += '<td style="padding:7px 8px;font-weight:600">'+c.name+'</td>';
+    html += '<td style="padding:7px 8px;color:var(--ts)">Fase '+c.fase+'</td>';
+    html += '<td style="padding:7px 8px;text-align:right">'+c.society+'</td>';
+    html += '<td style="padding:7px 8px;text-align:right">'+c.fisica+'</td>';
+    html += '<td style="padding:7px 8px;text-align:right;font-weight:700;color:'+corL+'">+'+c.diff+' '+lider+'</td>';
+    html += '<td style="padding:7px 8px;min-width:120px">';
+    html += '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden">';
+    html += '<div style="width:'+pSoc+'%;background:#1D9E75"></div>';
+    html += '<div style="width:'+pFis+'%;background:#5DCAA5"></div></div>';
+    html += '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--ts);margin-top:2px"><span>'+pSoc+'%</span><span>'+pFis+'%</span></div>';
+    html += '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+
+  // Mapa
+  html += '<div class="chart-full" style="background:var(--white);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:20px">';
+  html += '<div class="chart-title" style="margin-bottom:12px">Mapa do Rio Grande do Norte — Municípios com areninhas</div>';
+  html += '<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;font-size:12px;color:var(--ts)">';
+  [['#085041','Fase 1'],['#1D9E75','Fase 2'],['#5DCAA5','Fase 3'],['#E8F5F0','Sem areninha']].forEach(function(item){
+    html += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:'+item[0]+';border:'+(item[0]==='#E8F5F0'?'1px solid #ddd':'none')+';margin-right:4px;vertical-align:middle"></span>'+item[1]+'</span>';
+  });
+  html += '</div>';
+  html += '<div id="rn-map" style="width:100%;height:440px;position:relative">';
+  html += '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ts);font-size:13px">⏳ Carregando mapa...</div>';
+  html += '</div>';
+  html += '<div id="map-tooltip" style="position:fixed;background:#1A1A1A;color:#fff;padding:8px 12px;border-radius:8px;font-size:12px;pointer-events:none;opacity:0;transition:opacity .15s;z-index:9999;max-width:220px"></div>';
+  html += '</div>';
 
   panel.innerHTML = html;
 
-  setTimeout(()=>{
+  setTimeout(function(){
     charts['ovbar']=new Chart(document.getElementById('ovbar'),{
       type:'bar',
       data:{labels:['Fase 1','Fase 2','Fase 3'],
@@ -1069,11 +1220,172 @@ function renderOverall() {
     });
     charts['ovpct']=new Chart(document.getElementById('ovpct'),{
       type:'bar',
-      data:{labels:['Fase 1','Fase 2','Fase 3'],datasets:[{label:'% meta',data:pcts,backgroundColor:pcts.map(p=>barColor(p))}]},
+      data:{labels:['Fase 1','Fase 2','Fase 3'],datasets:[{label:'% meta',data:pcts,backgroundColor:pcts.map(function(p){return barColor(p);})}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-        scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{callback:v=>v+'%'},suggestedMax:55}}}
+        scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(0,0,0,.05)'},ticks:{callback:function(v){return v+'%';}},suggestedMax:55}}}
     });
   },80);
+}
+
+// ── MAPA RN ──────────────────────────────────────────────────
+// Lista completa de cidades com areninhas por fase
+const CIDADES_MAPA = {
+  // Fase 1
+  'Afonso Bezerra':1,'Angicos':1,'Currais Novos':1,'Doutor Severiano':1,
+  'Japi':1,'Poço Branco':1,'São Gonçalo do Amarante':1,
+  'Tenente Laurentino Cruz':1,'Umarizal':1,'Vera Cruz':1,
+  // Fase 2
+  'Apodi':2,'Caicó':2,'Caraúbas':2,'Carnaúba dos Dantas':2,
+  'Jardim de Piranhas':2,'Jardim do Seridó':2,'Lucrécia':2,
+  'Macau':2,'Messias Targino':2,'Mossoró':2,'Santo Antônio':2,
+  'São Gonçalo do Amarante':1, // já está na fase 1
+  'Upanema':2,
+  // Fase 3
+  'Acari':3,'Campo Grande':3,'Ipanguaçu':3,'Janduís':3,
+  'Martins':3,'Santa Maria':3,'São Fernando':3,'Sítio Novo':3,
+  'Taboleiro Grande':3,'Natal':3,
+};
+
+// Cores por fase
+const FASE_CORES = { 1:'#085041', 2:'#1D9E75', 3:'#5DCAA5' };
+
+function normalizeCity(name) {
+  return (name||'').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/\s+/g,' ').trim();
+}
+
+const CIDADES_NORM = {};
+Object.entries(CIDADES_MAPA).forEach(([name, fase]) => {
+  CIDADES_NORM[normalizeCity(name)] = fase;
+});
+
+function buildCidadesNormFromData() {
+  const map = {};
+  [1,2,3].forEach(p => {
+    DATA[p].cities.forEach(c => {
+      map[normalizeCity(c.name)] = { fase: p, city: c };
+    });
+  });
+  return map;
+}
+
+function getMapColor(fase) {
+  return FASE_CORES[fase] || '#E8F5F0';
+}
+
+async function renderMap() {
+  const container = document.getElementById('rn-map');
+  if (!container) return;
+
+  // Evita re-render se já tem SVG desenhado
+  if (container.querySelector('svg')) return;
+
+  // Aguarda container estar visível com dimensões reais
+  let w = container.offsetWidth;
+  let h = container.offsetHeight;
+  if (w === 0 || h === 0) {
+    setTimeout(renderMap, 200);
+    return;
+  }
+
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ts);font-size:13px">⏳ Carregando mapa...</div>';
+
+  // Carrega D3 se necessário
+  if (!window.d3) {
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  // Tenta múltiplas fontes do GeoJSON de municípios do RN
+  const GEOJSON_URLS = [
+    'https://servicodados.ibge.gov.br/api/v3/malhas/estados/24/municipios?formato=application/vnd.geo+json&resolucao=5',
+    'https://raw.githubusercontent.com/tbrugz/geodata-br/master/geojson/geojs-24-mun.json',
+    'https://raw.githubusercontent.com/luizpedone/municipal-brazilian-geodata/master/data/RN.json',
+  ];
+
+  let geojson = null;
+  for (const url of GEOJSON_URLS) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) { geojson = await r.json(); break; }
+    } catch(e) { continue; }
+  }
+
+  if (!geojson || !geojson.features || geojson.features.length === 0) {
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-size:13px;text-align:center;padding:20px">Não foi possível carregar o mapa.<br>Verifique a conexão com a internet.</div>';
+    return;
+  }
+
+  // Detecta automaticamente qual propriedade contém o nome do município
+  const sampleProps = geojson.features[0]?.properties || {};
+  const nameKey = ['name','Name','NM_MUN','nome','NOME','municipio','MUNICIPIO','NM_MUNICIP']
+    .find(k => sampleProps[k]) || Object.keys(sampleProps)[0];
+
+  const cidadesNorm = buildCidadesNormFromData();
+  const tooltip = document.getElementById('map-tooltip');
+
+  // Re-lê dimensões pois pode ter mudado
+  w = container.offsetWidth;
+  h = container.offsetHeight;
+
+  container.innerHTML = '';
+  const svg = d3.select(container).append('svg')
+    .attr('width', w).attr('height', h)
+    .style('display', 'block');
+
+  const projection = d3.geoMercator().fitSize([w - 10, h - 10], geojson);
+  const pathGen = d3.geoPath().projection(projection);
+
+  function getMunName(feature) {
+    return feature.properties[nameKey] || '';
+  }
+
+  function getCityData(feature) {
+    const nome = normalizeCity(getMunName(feature));
+    return cidadesNorm[nome] || (CIDADES_NORM[nome] ? { fase: CIDADES_NORM[nome], city: null } : null);
+  }
+
+  svg.selectAll('path')
+    .data(geojson.features)
+    .enter().append('path')
+    .attr('d', pathGen)
+    .attr('fill', d => {
+      const info = getCityData(d);
+      return info ? getMapColor(info.fase) : '#E8F5F0';
+    })
+    .attr('stroke', '#fff')
+    .attr('stroke-width', 0.6)
+    .style('cursor', d => getCityData(d) ? 'pointer' : 'default')
+    .on('mousemove', function(event, d) {
+      const info = getCityData(d);
+      const nome = getMunName(d);
+      if (info) {
+        const city = info.city;
+        let details = '';
+        if (city) {
+          details = `<div style="margin-top:4px;font-size:11px;opacity:.85">
+            Society: ${city.society} · Física: ${city.fisica}<br>
+            Total: <strong>${city.total}</strong> · Meta: ${Math.round(city.total/META_ARENINHA*100)}%
+          </div>`;
+        }
+        tooltip.innerHTML = `<strong>${nome}</strong><div style="font-size:11px;margin-top:2px;opacity:.8">Fase ${info.fase}</div>${details}`;
+      } else {
+        tooltip.innerHTML = `<span style="opacity:.7">${nome}</span>`;
+      }
+      tooltip.style.opacity = '1';
+      tooltip.style.left = (event.clientX + 14) + 'px';
+      tooltip.style.top  = (event.clientY - 10) + 'px';
+    })
+    .on('mouseleave', () => { tooltip.style.opacity = '0'; })
+    .on('click', (event, d) => {
+      const info = getCityData(d);
+      if (info) showPhase(info.fase);
+    });
 }
 
 // ── NAVEGAÇÃO ────────────────────────────────────────────────
@@ -1081,7 +1393,12 @@ function showPhase(phase) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',[1,2,3,0][i]===phase));
   document.getElementById('panel-'+phase).classList.add('active');
-  phase===0?renderOverall():renderPhase(phase);
+  if (phase === 0) {
+    renderOverall();
+    setTimeout(renderMap, 300);
+  } else {
+    renderPhase(phase);
+  }
 }
 
 // ── RELATÓRIO EXECUTIVO PDF ──────────────────────────────────
