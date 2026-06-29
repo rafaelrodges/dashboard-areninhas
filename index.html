@@ -645,7 +645,12 @@ function renderGlobalProgress() {
   document.getElementById('global-progress').innerHTML = `
     <div class="gb-top">
       <div><div class="gb-label">Progresso geral do projeto</div>
-        <div class="gb-sub">Faltam <strong>${fmt(META-GRAND)}</strong> inscritos para a meta</div></div>
+        <div class="gb-sub" style="margin-top:4px">
+          <span style="background:#FEE2E2;color:#991B1B;font-weight:700;padding:2px 10px;border-radius:20px;font-size:13px">
+            ⚠️ Faltam ${fmt(META-GRAND)} inscritos
+          </span>
+        </div>
+      </div>
       <div style="text-align:right">
         <div class="gb-pct" style="color:${textColor(GRAND_PCT)}">${GRAND_PCT}%</div>
         <div class="gb-sub">${fmt(GRAND)} / ${fmt(META)}</div>
@@ -675,17 +680,19 @@ function renderGlobalProgress() {
 // ── BARRA TEMPORAL ───────────────────────────────────────────
 function renderTimeBars(phase, cities) {
 
-  // Eixo de semestres: de Set/2024 até Dez/2026
+  // Eixo de semestres: de Set/2024 até Dez/2027
   const AXIS_START = new Date(2024, 8, 1);  // Set/2024
-  const AXIS_END   = new Date(2026, 11, 31); // Dez/2026
+  const AXIS_END   = new Date(2027, 11, 31); // Dez/2027
   const AXIS_SPAN  = AXIS_END - AXIS_START;
 
-  // Semestres visíveis no eixo
+  // Semestres visíveis no eixo até Dez/2027
   const semestres = [
     { label:'1S/25', date: new Date(2025, 0, 1) },  // Jan/25
     { label:'2S/25', date: new Date(2025, 6, 1) },  // Jul/25
     { label:'1S/26', date: new Date(2026, 0, 1) },  // Jan/26
     { label:'2S/26', date: new Date(2026, 6, 1) },  // Jul/26
+    { label:'1S/27', date: new Date(2027, 0, 1) },  // Jan/27
+    { label:'2S/27', date: new Date(2027, 6, 1) },  // Jul/27
   ];
 
   // Posição % de uma data no eixo
@@ -1024,7 +1031,11 @@ function renderOverall() {
     return Math.round(b.total/META_ARENINHA*100) - Math.round(a.total/META_ARENINHA*100);
   });
   const top5    = ranking.slice(0,5);
-  const bottom5 = ranking.slice().reverse().slice(0,5);
+  // Bottom 5: exclui desativadas
+  const bottom5 = ranking.filter(function(c){
+    var s = (c.status||'').toLowerCase();
+    return !s.includes('desativ');
+  }).slice().reverse().slice(0,5);
 
   const totalAtivas      = todasCidades.filter(c => { var s=(c.status||'').toLowerCase(); return !s||s.includes('ativ')||s==='ok'; }).length;
   const totalDesativadas = todasCidades.filter(c => (c.status||'').toLowerCase().includes('desativ')).length;
