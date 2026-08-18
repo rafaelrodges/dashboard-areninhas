@@ -324,6 +324,13 @@ let apiLoaded = { f1: false, f23: false };
 function loadExtra() {
   try { extra = JSON.parse(localStorage.getItem('areninhas_extra') || '{}'); } catch(e) { extra = {}; }
 }
+function saveAdesao(id, valor) {
+  if (!extra[id]) extra[id] = {};
+  extra[id].adesao = valor;
+  try { localStorage.setItem('areninhas_extra', JSON.stringify(extra)); } catch(e) {}
+  showToast(valor === 'Baixa' ? '⚠️ Baixa adesão registrada!' : '✅ Adesão normalizada!');
+}
+
 function saveExtra() {
   try { localStorage.setItem('areninhas_extra', JSON.stringify(extra)); } catch(e) {}
   showToast('Salvo!');
@@ -1061,16 +1068,23 @@ function renderOverall() {
     return !s.includes('desativ');
   }).slice().reverse().slice(0,5);
 
-  const totalAtivas      = todasCidades.filter(c => { var s=(c.status||'').toLowerCase(); return !s||s.includes('ativ')||s==='ok'; }).length;
-  const totalDesativadas = todasCidades.filter(c => (c.status||'').toLowerCase().includes('desativ')).length;
-  const totalSuspensas   = todasCidades.filter(c => (c.status||'').toLowerCase().includes('suspens')).length;
-  const txAtivacao       = Math.round(totalAtivas/todasCidades.length*100);
+  const totalAtivas       = todasCidades.filter(c => (c.status||'').toLowerCase() === 'ativada').length;
+  const totalFinalizadas  = todasCidades.filter(c => (c.status||'').toLowerCase() === 'finalizada').length;
+  const totalNaoIniciadas = todasCidades.filter(c => (c.status||'').toLowerCase() === 'não iniciada' || (c.status||'').toLowerCase() === 'nao iniciada').length;
+  const totalSuspensas    = 0;
+  const totalDesativadas  = 0;
+  const txAtivacao        = Math.round(totalAtivas/todasCidades.length*100);
 
   const emRisco = todasCidades.filter(function(c){
     var cp = Math.round(c.total/META_ARENINHA*100);
     var e  = extra[c.id]||{};
     var tp = timePct(e.inicio, e.fim);
     return cp < 60 && tp !== null && tp >= 50 && tp < 100;
+  });
+
+  // Areninhas com baixa adesão (lidas da planilha via Apps Script)
+  const baixaAdesao = todasCidades.filter(function(c){
+    return (c.adesao||'').toLowerCase().includes('baixa');
   });
 
   const desequilibrio = comInscricoes.map(function(c){
@@ -1087,15 +1101,23 @@ function renderOverall() {
 
   var html = '';
 
-  // Métricas principais
-  html += '<div class="metrics">';
-  html += '<div class="metric"><div class="metric-label">Total geral</div>';
-  html += '<div class="metric-value '+pctClass(GRAND_PCT)+'">'+fmt(GRAND)+'</div>';
-  html += '<div class="metric-sub">'+GRAND_PCT+'% · faltam '+fmt(META-GRAND)+'</div></div>';
-  phases.forEach(function(p,i){
-    html += '<div class="metric"><div class="metric-label">Fase '+p+'</div>';
-    html += '<div class="metric-value">'+fmt(totals[i])+'</div>';
-    html += '<div class="metric-sub">'+pcts[i]+'% da meta total</div></div>';
+  // ── INDICADORES DE GESTÃO (primeiro bloco) ──
+  html += '<div class="chart-card" style="margin-bottom:20px">';
+  html += '<div class="chart-title" style="margin-bottom:14px">📊 Indicadores de Gestão</div>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">';
+
+  var cards = [
+    {bg:'var(--gbg)', tc:textColor(txAtivacao), label:'Taxa de Ativação', val:txAtivacao+'%', sub:totalAtivas+' de '+todasCidades.length+' areninhas'},
+    {bg:'#D1FAE5',    tc:'#065F46',  label:'Ativadas',      val:totalAtivas,       sub:Math.round(totalAtivas/todasCidades.length*100)+'% do total'},
+    {bg:'#DBEAFE',    tc:'#1E40AF',  label:'Finalizadas',   val:totalFinalizadas,  sub:Math.round(totalFinalizadas/todasCidades.length*100)+'% do total'},
+    {bg:'#F3F4F6',    tc:'#374151',  label:'Não iniciadas', val:totalNaoIniciadas, sub:Math.round(totalNaoIniciadas/todasCidades.length*100)+'% do total'},
+  ];
+  cards.forEach(function(c){
+    html += '<div style="background:'+c.bg+';border-radius:8px;padding:12px 14px;text-align:center">';
+    html += '<div style="font-size:11px;color:'+c.tc+';text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;opacity:.8">'+c.label+'</div>';
+    html += '<div style="font-size:'+(c.small?'15':'24')+'px;font-weight:700;color:'+c.tc+'">'+c.val+'</div>';
+    html += '<div style="font-size:11px;color:'+c.tc+';margin-top:2px;opacity:.8">'+c.sub+'</div>';
+    html += '</div>';
   });
   html += '</div>';
 
@@ -1115,6 +1137,7 @@ function renderOverall() {
     html += '<span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#5DCAA5;margin-right:4px"></span>Física: '+fisica[i]+'</span>';
     html += '</div></div>';
   });
+  html += '</div>'; // fecha chart-card indicadores
 
   // Gráficos
   html += '<div class="charts-row">';
@@ -1126,39 +1149,50 @@ function renderOverall() {
   html += '<div style="position:relative;height:220px"><canvas id="ovpct"></canvas></div></div>';
   html += '</div>';
 
-  // ── INDICADORES DE GESTÃO ──
-  html += '<div class="chart-card" style="margin-bottom:20px">';
-  html += '<div class="chart-title" style="margin-bottom:14px">📊 Indicadores de Gestão</div>';
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">';
-
-  var cards = [
-    {bg:'var(--gbg)', tc:textColor(txAtivacao), label:'Taxa de Ativação', val:txAtivacao+'%', sub:totalAtivas+' de '+todasCidades.length+' areninhas'},
-    {bg:'#D1FAE5',    tc:'#065F46',  label:'Ativas',      val:totalAtivas,      sub:Math.round(totalAtivas/todasCidades.length*100)+'% do total'},
-    {bg:'#FEF3C7',    tc:'#92400E',  label:'Suspensas',   val:totalSuspensas,   sub:Math.round(totalSuspensas/todasCidades.length*100)+'% do total'},
-    {bg:'#F3F4F6',    tc:'#374151',  label:'Desativadas', val:totalDesativadas, sub:Math.round(totalDesativadas/todasCidades.length*100)+'% do total'},
-    {bg:'#FEE2E2',    tc:'#991B1B',  label:'Em risco ⚠️', val:emRisco.length,   sub:emRisco.length>0?'abaixo da meta no prazo':'nenhuma em risco'},
-    {bg:'var(--gbg)', tc:'var(--tp)', label:'Projeção meta', val:projStr, sub:fmt(Math.round(ritmo*30))+'/mês no ritmo atual', small:true},
-  ];
-  cards.forEach(function(c){
-    html += '<div style="background:'+c.bg+';border-radius:8px;padding:12px 14px;text-align:center">';
-    html += '<div style="font-size:11px;color:'+c.tc+';text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;opacity:.8">'+c.label+'</div>';
-    html += '<div style="font-size:'+(c.small?'15':'24')+'px;font-weight:700;color:'+c.tc+'">'+c.val+'</div>';
-    html += '<div style="font-size:11px;color:'+c.tc+';margin-top:2px;opacity:.8">'+c.sub+'</div>';
-    html += '</div>';
-  });
   html += '</div>';
 
-  // Alerta em risco
-  if(emRisco.length > 0){
-    html += '<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:12px 14px">';
-    html += '<div style="font-size:12px;font-weight:600;color:#991B1B;margin-bottom:8px">⚠️ Areninhas em risco — abaixo de 60% com mais de metade do período decorrido</div>';
-    html += '<div style="display:flex;flex-wrap:wrap;gap:8px">';
-    emRisco.forEach(function(c){
-      html += '<span style="background:#fff;border:1px solid #FECACA;border-radius:20px;padding:3px 12px;font-size:12px;color:#991B1B">Fase '+c.fase+' · '+c.name+' ('+Math.round(c.total/META_ARENINHA*100)+'%)</span>';
+  // ── BAIXA ADESÃO (lida do localStorage) ──
+  var todasBaixaAdesao = [1,2,3].flatMap(function(p){
+    return DATA[p].cities
+      .filter(function(c){ return (extra[c.id]||{}).adesao === 'Baixa'; })
+      .map(function(c){ return Object.assign({},c,{fase:p}); });
+  });
+
+  html += '<div class="chart-card" style="margin-bottom:20px">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
+  html += '<div class="chart-title" style="margin-bottom:0">⚠️ Areninhas com Baixa Adesão</div>';
+  if(todasBaixaAdesao.length > 0){
+    html += '<span style="background:#FEE2E2;color:#991B1B;font-size:12px;font-weight:700;padding:3px 12px;border-radius:20px">'+todasBaixaAdesao.length+' areninha'+(todasBaixaAdesao.length>1?'s':'')+'</span>';
+  }
+  html += '</div>';
+
+  if(todasBaixaAdesao.length > 0){
+    html += '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+    html += '<thead><tr>';
+    html += '<th style="text-align:left;padding:7px 10px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)">Fase</th>';
+    html += '<th style="text-align:left;padding:7px 10px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)">Cidade</th>';
+    html += '<th style="text-align:right;padding:7px 10px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)">Society</th>';
+    html += '<th style="text-align:right;padding:7px 10px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)">Física</th>';
+    html += '<th style="text-align:right;padding:7px 10px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)">Total</th>';
+    html += '<th style="text-align:right;padding:7px 10px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)">% Meta</th>';
+    html += '</tr></thead><tbody>';
+    todasBaixaAdesao.forEach(function(c,i){
+      var cp = Math.round(c.total/META_ARENINHA*100);
+      var bg = i%2===0?'#FFF5F5':'#FFF8F8';
+      html += '<tr style="background:'+bg+'">';
+      html += '<td style="padding:7px 10px"><span style="background:#FEE2E2;color:#991B1B;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px">Fase '+c.fase+'</span></td>';
+      html += '<td style="padding:7px 10px;font-weight:600;color:#991B1B">'+c.name+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right">'+c.society+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right">'+c.fisica+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right;font-weight:700">'+c.total+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right;font-weight:700;color:'+textColor(cp)+'">'+cp+'%</td>';
+      html += '</tr>';
     });
-    html += '</div></div>';
+    html += '</tbody></table>';
   } else {
-    html += '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:10px 14px;font-size:12px;color:#065F46">✅ Nenhuma areninha em situação de risco no momento.</div>';
+    html += '<div style="background:#F3F4F6;border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ts)">';
+    html += 'Nenhuma areninha marcada com baixa adesão. Marque nas tabelas de cada fase.';
+    html += '</div>';
   }
   html += '</div>';
 
@@ -1617,26 +1651,26 @@ async function exportPDF() {
       return y+13;
     }
     function tHeader(y,cols){
-      pdf.setFillColor(...GD);pdf.rect(ml,y,cw,6,'F');
-      pdf.setFontSize(7.5);pdf.setFont(undefined,'bold');pdf.setTextColor(255,255,255);
-      cols.forEach(c=>pdf.text(c.label,c.x,y+4.2,{align:c.align||'left'}));
-      pdf.setFont(undefined,'normal');return y+6;
+      pdf.setFillColor(...GD);pdf.rect(ml,y,cw,8,'F');
+      pdf.setFontSize(9);pdf.setFont(undefined,'bold');pdf.setTextColor(255,255,255);
+      cols.forEach(c=>pdf.text(c.label,c.x,y+5.5,{align:c.align||'left'}));
+      pdf.setFont(undefined,'normal');return y+8;
     }
     function tRow(y,cols,vals,shade){
-      if(shade){pdf.setFillColor(245,250,248);pdf.rect(ml,y,cw,6,'F');}
-      pdf.setFontSize(7.5);
+      if(shade){pdf.setFillColor(245,250,248);pdf.rect(ml,y,cw,8,'F');}
+      pdf.setFontSize(9);
       cols.forEach((c,i)=>{
         pdf.setTextColor(...(c.color||TP));
-        pdf.text(String(vals[i]??'—'),c.x,y+4.2,{align:c.align||'left'});
+        pdf.text(String(vals[i]??'—'),c.x,y+5.5,{align:c.align||'left'});
       });
-      pdf.setDrawColor(...BOR);pdf.setLineWidth(.2);pdf.line(ml,y+6,ml+cw,y+6);
-      return y+6;
+      pdf.setDrawColor(...BOR);pdf.setLineWidth(.2);pdf.line(ml,y+8,ml+cw,y+8);
+      return y+8;
     }
     function tTotal(y,cols,vals){
-      pdf.setFillColor(...GD);pdf.rect(ml,y,cw,6.5,'F');
-      pdf.setFontSize(7.5);pdf.setFont(undefined,'bold');pdf.setTextColor(255,255,255);
-      cols.forEach((c,i)=>pdf.text(String(vals[i]??''),c.x,y+4.5,{align:c.align||'left'}));
-      pdf.setFont(undefined,'normal');return y+9;
+      pdf.setFillColor(...GD);pdf.rect(ml,y,cw,9,'F');
+      pdf.setFontSize(9);pdf.setFont(undefined,'bold');pdf.setTextColor(255,255,255);
+      cols.forEach((c,i)=>pdf.text(String(vals[i]??''),c.x,y+6,{align:c.align||'left'}));
+      pdf.setFont(undefined,'normal');return y+12;
     }
     function cFor(p){return p>=100?GM:p>=60?AMB:RED;}
     function tFor(p){return p>=100?[10,107,74]:p>=60?[154,92,10]:[155,28,28];}
@@ -1749,85 +1783,101 @@ async function exportPDF() {
       y=mt+14;
       const d=DATA[phase];
       const fp=pct(d.grand,META);
-      const totalCad=d.cities.reduce((s,c)=>s+(c.cadastrados||0),0);
+
+      // Título da fase
       pdf.setFontSize(16);pdf.setFont(undefined,'bold');pdf.setTextColor(...GD);
-      pdf.text(`Fase ${phase} — Detalhamento por Areninha`,ml,y);y+=6;
+      pdf.text(`Fase ${phase} — Areninhas Potiguares`,ml,y);y+=6;
       pdf.setFontSize(8.5);pdf.setFont(undefined,'normal');pdf.setTextColor(...MUT);
       pdf.text(`${d.cities.length} cidades · ${fmt(d.grand)} inscrições · ${fp}% da meta do projeto`,ml,y);y+=8;
+
+      // KPIs
       const kpis=[
         {label:'Total Inscritos',value:fmt(d.grand),sub:`${fp}% da meta`,color:cFor(fp)},
-        {label:'Society',value:fmt(d.totalSociety),sub:`${pct(d.totalSociety,d.grand)}% do total`},
-        {label:'Atv. Física',value:fmt(d.totalFisica),sub:`${pct(d.totalFisica,d.grand)}% do total`},
+        {label:'Society',value:fmt(d.totalSociety),sub:`${pct(d.totalSociety,Math.max(d.grand,1))}% do total`},
+        {label:'Atv. Física',value:fmt(d.totalFisica),sub:`${pct(d.totalFisica,Math.max(d.grand,1))}% do total`},
         {label:'Cidades',value:d.cities.length,sub:`${d.cities.filter(c=>c.total>0).length} com inscrições`},
       ];
-      if(phase!==1)kpis.push({label:'Cadastrados Equipe',value:totalCad,sub:`${d.cities.filter(c=>c.cadastrados>0).length} cidades`});
       y=kpiRow(y,kpis);
       y=pBar(y,d.grand,META,`Contribuição para a meta do projeto`,`${fp}%`,cFor(fp));
-      y+=2;y=sTitle(y,'Progresso por Cidade');
-      const mpc=META/d.cities.length;
-      d.cities.filter(c=>c.total>0).forEach(c=>{
-        if(y>H-30){pdf.addPage();page++;addFooter(page);y=mt+14;}
-        const cp=pct(c.total,mpc);
-        const e=extra[c.id]||{};
-        const periodo=(e.inicio||e.fim)?`${fmtMonth(e.inicio)} → ${fmtMonth(e.fim)}`:'';
-        pdf.setFontSize(7.5);pdf.setFont(undefined,'bold');pdf.setTextColor(...TP);
-        pdf.text(c.name,ml,y+2.5);
-        pdf.setFont(undefined,'normal');pdf.setTextColor(...MUT);
-        pdf.text(`Society: ${c.society}  |  Física: ${c.fisica}  |  Total: ${c.total}${periodo?' | '+periodo:''}`,ml+55,y+2.5);
-        pdf.setTextColor(...cFor(cp));pdf.text(`${cp}%`,W-mr,y+2.5,{align:'right'});
-        pdf.setFillColor(...BOR);pdf.roundedRect(ml,y+4,cw,3.5,1,1,'F');
-        const fw2=Math.min(cp/100,1)*cw;
-        if(fw2>0){pdf.setFillColor(...cFor(cp));pdf.roundedRect(ml,y+4,fw2,3.5,1,1,'F');}
-        // obs
-        if(e.obs){
-          pdf.setFontSize(6.5);pdf.setTextColor(...MUT);pdf.setFont(undefined,'italic');
-          pdf.text(`Obs.: ${e.obs.substring(0,80)}${e.obs.length>80?'…':''}`,ml,y+10.5);
-          pdf.setFont(undefined,'normal');y+=14;
-        } else { y+=10; }
-      });
-      const empty=d.cities.filter(c=>c.total===0);
-      if(empty.length>0){
-        if(y>H-30){pdf.addPage();page++;addFooter(page);y=mt+14;}
-        pdf.setFontSize(8);pdf.setFont(undefined,'bold');pdf.setTextColor(...MUT);
-        pdf.text('Cidades sem inscrições registradas:',ml,y);y+=5;
-        pdf.setFont(undefined,'normal');pdf.setFontSize(8);
-        const sp=pdf.splitTextToSize(empty.map(c=>c.name).join('  ·  '),cw);
-        pdf.text(sp,ml,y);y+=sp.length*4+4;
-      }
-      // Tabela
+      y+=4;
+
+      // ── TABELA PRINCIPAL ──
       if(y>H-60){pdf.addPage();page++;addFooter(page);y=mt+14;}
-      y+=2;y=sTitle(y,'Tabela Completa');
-      const hasCad=phase!==1,hasSt=phase===3;
-      const colsD=[{label:'Cidade',x:ml+2}];
-      if(hasSt)colsD.push({label:'Status',x:ml+46});
-      if(hasCad)colsD.push({label:'Cad.',x:ml+(hasSt?62:48),align:'center'});
-      const xS=ml+(hasSt?72:hasCad?60:48);
-      const xF=xS+25,xT=xF+25,xP=xT+28,xPer=xP+20,xO=xPer+32;
-      colsD.push({label:'Society',x:xS,align:'right'});
-      colsD.push({label:'Física',x:xF,align:'right'});
-      colsD.push({label:'Total',x:xT,align:'right'});
-      colsD.push({label:'%',x:xP,align:'right'});
-      colsD.push({label:'Período',x:xPer});
-      colsD.push({label:'Observações',x:xO});
-      y=tHeader(y,colsD);
+      y=sTitle(y,'Lista de Areninhas — Período, Status e Inscrições');
+
+      // Função para calcular duração em meses
+      function calcMeses(inicio, fim) {
+        const MESES_PT = {'janeiro':1,'fevereiro':2,'março':3,'abril':4,'maio':5,'junho':6,
+          'julho':7,'agosto':8,'setembro':9,'outubro':10,'novembro':11,'dezembro':12};
+        function parseM(str) {
+          if(!str) return null;
+          const p = str.toLowerCase().replace(/\s/g,'').split('/');
+          if(p.length!==2) return null;
+          const m=MESES_PT[p[0]], yr=parseInt(p[1]);
+          if(!m||isNaN(yr)) return null;
+          return {m, yr};
+        }
+        const s=parseM(inicio), e=parseM(fim);
+        if(!s||!e) return '—';
+        const meses=(e.yr-s.yr)*12+(e.m-s.m)+1;
+        return meses>0?meses+'m':'—';
+      }
+
+      // Colunas: Cidade | Início | Fim | Duração | Status | Society | Física | Total | %
+      const cols=[
+        {label:'Cidade',       x:ml+2,   align:'left'},
+        {label:'Início',       x:ml+46,  align:'left'},
+        {label:'Fim',          x:ml+76,  align:'left'},
+        {label:'Dur.',         x:ml+106, align:'center'},
+        {label:'Situação',     x:ml+118, align:'left'},
+        {label:'Society',      x:ml+142, align:'right'},
+        {label:'Física',       x:ml+153, align:'right'},
+        {label:'Total',        x:ml+163, align:'right'},
+        {label:'%',            x:ml+172, align:'right'},
+      ];
+      y=tHeader(y,cols);
+
+      let totSoc=0, totFis=0, totGrand=0;
       d.cities.forEach((c,i)=>{
-        if(y>H-22){pdf.addPage();page++;addFooter(page);y=mt+14;y=tHeader(y,colsD);}
-        const cp=pct(c.total,mpc);
+        if(y>H-20){pdf.addPage();page++;addFooter(page);y=mt+14;y=tHeader(y,cols);}
         const e=extra[c.id]||{};
-        const periodo=(e.inicio||e.fim)?`${fmtMonth(e.inicio).split('/')[0].substring(0,3)}→${fmtMonth(e.fim).split('/')[0].substring(0,3)} ${(e.fim||'').split('/')[1]||''}`:' —';
-        const obs2=(e.obs||'').substring(0,22)+((e.obs||'').length>22?'…':'');
-        const vals=[c.name.length>18?c.name.substring(0,16)+'…':c.name];
-        if(hasSt)vals.push(c.status||'—');
-        if(hasCad)vals.push(c.cadastrados||0);
-        vals.push(c.society,c.fisica,c.total,cp>0?`${cp}%`:'—',periodo,obs2||'—');
-        const coloredCols=colsD.map((col,ci)=>({...col,color:ci===colsD.length-3&&cp>0?cFor(cp):null}));
+        const inicio=e.inicio||c.inicio||'';
+        const fim=e.fim||c.fim||'';
+        const dur=calcMeses(inicio,fim);
+        const cp=Math.round(c.total/META_ARENINHA*100);
+        const st=c.status||'—';
+
+        // Formata mês/ano abreviado: "Set/24"
+        function fmtM(str){
+          if(!str) return '—';
+          const p=str.split('/');
+          if(p.length!==2) return str;
+          return p[0].substring(0,3)+'/'+p[1].slice(-2);
+        }
+
+        const vals=[
+          c.name.length>18?c.name.substring(0,16)+'…':c.name,
+          fmtM(inicio), fmtM(fim), dur, st,
+          c.society||0, c.fisica||0, c.total||0,
+          cp>0?cp+'%':'—'
+        ];
+
+        const coloredCols = cols.map((col,ci)=>({
+          ...col,
+          color: ci===8&&cp>0 ? cFor(cp) : ci===4 ? (
+            st.toLowerCase()==='ativada'   ? [10,107,74]  :
+            st.toLowerCase()==='finalizada'? [30,64,175]  :
+            MUT
+          ) : null
+        }));
+
         y=tRow(y,coloredCols,vals,i%2===0);
+        totSoc+=c.society||0; totFis+=c.fisica||0; totGrand+=c.total||0;
       });
-      const tv=[`TOTAL F${phase}`];
-      if(hasSt)tv.push('');
-      if(hasCad)tv.push(totalCad);
-      tv.push(fmt(d.totalSociety),fmt(d.totalFisica),fmt(d.grand),`${fp}%`,'','');
-      y=tTotal(y,colsD,tv);
+
+      // Linha de total
+      const fpTotal=Math.round(totGrand/META_ARENINHA/d.cities.length*100);
+      y=tTotal(y,cols,[`TOTAL FASE ${phase}`,'','','','',fmt(totSoc),fmt(totFis),fmt(totGrand),fp+'%']);
     });
 
     msg.textContent='Salvando relatório...';
