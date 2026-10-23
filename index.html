@@ -635,18 +635,43 @@ function parseMonth(str) {
   if (parts.length !== 2) return null;
   const m = MESES[parts[0]], y = parseInt(parts[1]);
   if (!m || isNaN(y)) return null;
-  return new Date(y, m-1, 1);
+  return new Date(y, m-1, 1); // mês de início → sempre dia 1 às 00:00
+}
+// Mês de término → sempre o ÚLTIMO dia do mês, até 23:59:59.999
+// (new Date(y, m, 0) devolve o último dia do mês m, já considerando anos bissextos)
+function parseMonthEnd(str) {
+  const d = parseMonth(str);
+  if (!d) return null;
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+// Duração em meses (contagem inclusiva: nov/2024 → jul/2026 = 21 meses)
+function monthsBetween(inicio, fim) {
+  const s = parseMonth(inicio), e = parseMonth(fim);
+  if (!s || !e) return null;
+  const n = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1;
+  return n >= 1 ? n : null;
+}
+function fmtDuracao(n) {
+  if (n === null || n === undefined) return '—';
+  return n + (n === 1 ? ' mês' : ' meses');
+}
+// Exibição: apenas mês abreviado/ano (ex.: Set/2025). O dia é só lógica interna.
+const MESES_ABREV = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+function fmtMesAno(d) {
+  if (!d) return '—';
+  return MESES_ABREV[d.getMonth()] + '/' + d.getFullYear();
 }
 function timePct(inicio, fim) {
-  const s = parseMonth(inicio), e = parseMonth(fim);
+  const s = parseMonth(inicio), e = parseMonthEnd(fim);
   if (!s || !e) return null;
   const today = new Date();
   if (today < s) return 0;
   if (today > e) return 100;
-  return Math.round((today - s) / (e - s) * 100);
+  // Teto de 99% enquanto o último dia do mês final não terminou (evita arredondar para 100% antes da hora)
+  return Math.min(99, Math.round((today - s) / (e - s) * 100));
 }
 function markerPct(inicio, fim) {
-  const s = parseMonth(inicio), e = parseMonth(fim);
+  const s = parseMonth(inicio), e = parseMonthEnd(fim);
   if (!s || !e) return null;
   const today = new Date();
   const raw = (today - s) / (e - s) * 100;
@@ -748,9 +773,11 @@ function renderTimeBars(phase, cities) {
 
   // Largura fixa das colunas — deve bater com o grid das linhas
   const COL_CIDADE = 150;
-  const COL_PERIODO = 110;
+  const COL_PERIODO = 130;   // "Nov/2024 → Jul/2026"
+  const COL_DURACAO = 80;    // "21 meses"
   const COL_SITUACAO = 130;
   const COL_GAP = 8;
+  const GRID = `${COL_CIDADE}px 1fr ${COL_PERIODO}px ${COL_DURACAO}px ${COL_SITUACAO}px`;
 
   let html = `<div class="time-bar-wrap">
     <div class="time-bar-title">⏱ Período de realização das areninhas
@@ -758,23 +785,25 @@ function renderTimeBars(phase, cities) {
     </div>
 
     <!-- Legenda de semestres alinhada ao gráfico usando padding exato -->
-    <div style="padding-left:${COL_CIDADE + COL_GAP}px;padding-right:${COL_PERIODO + COL_GAP + COL_SITUACAO}px;margin-bottom:4px">
+    <div style="padding-left:${COL_CIDADE + COL_GAP}px;padding-right:${COL_PERIODO + COL_DURACAO + COL_SITUACAO + 3 * COL_GAP}px;margin-bottom:4px">
       <div style="position:relative;width:100%;height:16px">${semLegend}</div>
     </div>
 
     <!-- Cabeçalho -->
-    <div style="display:grid;grid-template-columns:${COL_CIDADE}px 1fr ${COL_PERIODO}px ${COL_SITUACAO}px;gap:${COL_GAP}px;align-items:center;font-size:11px;font-weight:600;color:var(--ts);padding-bottom:6px;margin-bottom:4px;border-bottom:1px solid var(--border)">
+    <div style="display:grid;grid-template-columns:${GRID};gap:${COL_GAP}px;align-items:center;font-size:11px;font-weight:600;color:var(--ts);padding-bottom:6px;margin-bottom:4px;border-bottom:1px solid var(--border)">
       <span>CIDADE</span>
       <span>LINHA DO TEMPO</span>
       <span style="text-align:center">PERÍODO</span>
+      <span style="text-align:center">DURAÇÃO</span>
       <span style="text-align:right">SITUAÇÃO</span>
     </div>`;
 
   cities.forEach(c => {
     const e = extra[c.id] || {};
-    const s = parseMonth(e.inicio);
-    const f = parseMonth(e.fim);
+    const s = parseMonth(e.inicio);      // dia 1º do mês de início
+    const f = parseMonthEnd(e.fim);      // último dia do mês de término
     const hasTime = s && f;
+    const duracao = monthsBetween(e.inicio, e.fim);
 
     // Posições no eixo global
     const startPos = s ? axisPos(s) : null;
@@ -796,10 +825,11 @@ function renderTimeBars(phase, cities) {
       }
     }
 
-    // Período legível
+    // Período legível: só mês/ano (o dia 1º / último dia é usado apenas nos cálculos)
     const periodoLabel = hasTime
-      ? `${fmtMonth(e.inicio).split('/')[0].substring(0,3)}/${(e.inicio||'').split('/')[1]||''} → ${fmtMonth(e.fim).split('/')[0].substring(0,3)}/${(e.fim||'').split('/')[1]||''}`
+      ? `${fmtMesAno(s)} → ${fmtMesAno(f)}`
       : '—';
+    const duracaoLabel = fmtDuracao(duracao);
 
     let barHtml = '';
     if (hasTime) {
@@ -821,12 +851,13 @@ function renderTimeBars(phase, cities) {
     }
 
     html += `
-    <div style="display:grid;grid-template-columns:${COL_CIDADE}px 1fr ${COL_PERIODO}px ${COL_SITUACAO}px;gap:${COL_GAP}px;align-items:center;padding:7px 0;border-bottom:0.5px solid var(--border)">
+    <div style="display:grid;grid-template-columns:${GRID};gap:${COL_GAP}px;align-items:center;padding:7px 0;border-bottom:0.5px solid var(--border)">
       <div>
         <div style="font-size:13px;font-weight:600;color:var(--tp);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</div>
       </div>
       <div style="padding:4px 0">${barHtml}</div>
       <div style="font-size:11px;color:var(--ts);text-align:center;white-space:nowrap">${periodoLabel}</div>
+      <div style="font-size:12px;font-weight:600;color:var(--tp);text-align:center;white-space:nowrap">${duracaoLabel}</div>
       <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
         ${tp !== null ? `<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:${statusBg};color:${statusColor};white-space:nowrap">${statusLabel}</span>` : '<span style="font-size:11px;color:#BDBDBD">—</span>'}
         <span class="time-edit" onclick="openModal('${c.id}','${c.name.replace(/'/g,"\\'")}')">✏️</span>
@@ -1075,12 +1106,7 @@ function renderOverall() {
   const totalDesativadas  = 0;
   const txAtivacao        = Math.round(totalAtivas/todasCidades.length*100);
 
-  const emRisco = todasCidades.filter(function(c){
-    var cp = Math.round(c.total/META_ARENINHA*100);
-    var e  = extra[c.id]||{};
-    var tp = timePct(e.inicio, e.fim);
-    return cp < 60 && tp !== null && tp >= 50 && tp < 100;
-  });
+  // (a análise de risco/ritmo por prazo é feita mais abaixo, depois de definir "hoje")
 
   // Areninhas com baixa adesão (lidas da planilha via Apps Script)
   const baixaAdesao = todasCidades.filter(function(c){
@@ -1099,6 +1125,66 @@ function renderOverall() {
   const dataProj = new Date(hoje.getTime()+diasRestantes*86400000);
   const projStr  = dataProj.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
 
+  // ── PROJEÇÃO DE CONCLUSÃO × PRAZO (Dez/2027) ──
+  var projVal = '—', projSmall = false, projBg = '#F3F4F6', projTc = '#374151', projSub = 'sem inscrições ainda';
+  if (GRAND >= META) {
+    projVal = 'Meta atingida'; projSmall = true; projBg = '#D1FAE5'; projTc = '#065F46';
+    projSub = fmt(GRAND) + ' de ' + fmt(META) + ' inscritos';
+  } else if (GRAND > 0 && dataProj.getFullYear() < 2100) {
+    var mesesDif = (dataProj.getFullYear() - 2027) * 12 + (dataProj.getMonth() - 11);
+    projVal = fmtMesAno(dataProj);
+    if (mesesDif <= 0) {
+      projBg = '#D1FAE5'; projTc = '#065F46';
+      projSub = 'Dentro do prazo (Dez/2027)' + (mesesDif < 0 ? ' · ' + (-mesesDif) + (mesesDif === -1 ? ' mês' : ' meses') + ' de folga' : '');
+    } else {
+      projBg = '#FEE2E2'; projTc = '#991B1B';
+      projSub = mesesDif + (mesesDif === 1 ? ' mês' : ' meses') + ' após o prazo (Dez/2027)';
+    }
+    projSub += '<br>Ritmo médio: ~' + fmt(Math.round(ritmo * 30)) + ' inscrições/mês';
+  }
+
+  // ── PRAZO × RITMO POR ARENINHA ──
+  // Início = dia 1º do mês; fim = último dia do mês (parseMonth / parseMonthEnd).
+  // Esperado até hoje = META_ARENINHA distribuída linearmente ao longo do período da areninha.
+  const JANELA_PRAZO = 90; // dias — "prazos próximos"
+  var semPeriodo = [], ritmoLista = [], prazosProximos = [];
+  todasCidades.forEach(function(c){
+    var ex = extra[c.id] || {};
+    var s = parseMonth(ex.inicio), f = parseMonthEnd(ex.fim);
+    if (!s || !f) { semPeriodo.push(c); return; }
+    var st = (c.status || '').toLowerCase();
+    if (st.includes('finalizada') || st.includes('desativ')) return; // fora da análise de ritmo
+    if (hoje < s || hoje > f) return;                                 // só areninhas em andamento
+    var fracao   = (hoje - s) / (f - s);
+    var tp       = timePct(ex.inicio, ex.fim);                        // 0–99 enquanto em andamento
+    var cp       = Math.round(c.total / META_ARENINHA * 100);
+    var esperado = Math.round(META_ARENINHA * fracao);
+    var defas    = tp - cp;                                           // pontos percentuais atrás do prazo
+    var item = { c:c, ex:ex, s:s, f:f, tp:tp, cp:cp, esperado:esperado, defas:defas,
+                 dias:Math.ceil((f - hoje) / 86400000), nivel:null };
+    if (cp < 60 && tp >= 50 && defas > 0)      item.nivel = 'risco';
+    else if (tp >= 25 && defas >= 10)          item.nivel = 'atencao';
+    if (item.nivel) ritmoLista.push(item);
+    if (item.dias <= JANELA_PRAZO) prazosProximos.push(item);
+  });
+  ritmoLista.sort(function(a,b){
+    if (a.nivel !== b.nivel) return a.nivel === 'risco' ? -1 : 1;
+    return b.defas - a.defas;
+  });
+  prazosProximos.sort(function(a,b){ return a.dias - b.dias; });
+  const emRisco   = ritmoLista.filter(function(i){ return i.nivel === 'risco'; });
+  const emAtencao = ritmoLista.filter(function(i){ return i.nivel === 'atencao'; });
+
+  var cardsPrazo = [
+    {bg:projBg, tc:projTc, label:'Projeção de conclusão', val:projVal, small:projSmall, sub:projSub},
+    {bg:emRisco.length ? '#FEE2E2' : '#D1FAE5', tc:emRisco.length ? '#991B1B' : '#065F46',
+     label:'Em risco', val:emRisco.length,
+     sub:emAtencao.length ? '+ ' + emAtencao.length + ' em atenção' : 'abaixo do ritmo do prazo'},
+    {bg:'#FEF3C7', tc:'#92400E', label:'Encerram em '+JANELA_PRAZO+' dias', val:prazosProximos.length, sub:'areninhas em andamento'},
+    {bg:semPeriodo.length ? '#F3F4F6' : '#D1FAE5', tc:semPeriodo.length ? '#374151' : '#065F46',
+     label:'Sem período', val:semPeriodo.length, sub:semPeriodo.length ? 'início/fim não informados' : 'todas com início e fim'}
+  ];
+
   var html = '';
 
   // ── INDICADORES DE GESTÃO (primeiro bloco) ──
@@ -1112,13 +1198,20 @@ function renderOverall() {
     {bg:'#DBEAFE',    tc:'#1E40AF',  label:'Finalizadas',   val:totalFinalizadas,  sub:Math.round(totalFinalizadas/todasCidades.length*100)+'% do total'},
     {bg:'#F3F4F6',    tc:'#374151',  label:'Não iniciadas', val:totalNaoIniciadas, sub:Math.round(totalNaoIniciadas/todasCidades.length*100)+'% do total'},
   ];
-  cards.forEach(function(c){
-    html += '<div style="background:'+c.bg+';border-radius:8px;padding:12px 14px;text-align:center">';
-    html += '<div style="font-size:11px;color:'+c.tc+';text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;opacity:.8">'+c.label+'</div>';
-    html += '<div style="font-size:'+(c.small?'15':'24')+'px;font-weight:700;color:'+c.tc+'">'+c.val+'</div>';
-    html += '<div style="font-size:11px;color:'+c.tc+';margin-top:2px;opacity:.8">'+c.sub+'</div>';
-    html += '</div>';
-  });
+  function cardHtml(c) {
+    var h = '<div style="background:'+c.bg+';border-radius:8px;padding:12px 14px;text-align:center">';
+    h += '<div style="font-size:11px;color:'+c.tc+';text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;opacity:.8">'+c.label+'</div>';
+    h += '<div style="font-size:'+(c.small?'15':'24')+'px;font-weight:700;color:'+c.tc+'">'+c.val+'</div>';
+    h += '<div style="font-size:11px;color:'+c.tc+';margin-top:2px;opacity:.8">'+c.sub+'</div>';
+    h += '</div>';
+    return h;
+  }
+  cards.forEach(function(c){ html += cardHtml(c); });
+  html += '</div>';
+
+  // Segunda linha de cards: projeção, risco, prazos e qualidade dos dados
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">';
+  cardsPrazo.forEach(function(c){ html += cardHtml(c); });
   html += '</div>';
 
   // Barras por fase
@@ -1193,6 +1286,91 @@ function renderOverall() {
     html += '<div style="background:#F3F4F6;border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ts)">';
     html += 'Nenhuma areninha marcada com baixa adesão. Marque nas tabelas de cada fase.';
     html += '</div>';
+  }
+  html += '</div>';
+
+  // ── RISCO E RITMO × PRAZO ──
+  function thS(txt, align) {
+    return '<th style="text-align:'+(align||'left')+';padding:7px 10px;font-size:11px;color:var(--ts);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--border)">'+txt+'</th>';
+  }
+  function pillS(txt, bg, col) {
+    return '<span style="background:'+bg+';color:'+col+';font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap">'+txt+'</span>';
+  }
+  function miniBar(p, color) {
+    return '<div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">'
+      + '<span style="min-width:34px;text-align:right">'+p+'%</span>'
+      + '<div style="background:var(--border);border-radius:4px;height:5px;width:60px"><div style="background:'+color+';border-radius:4px;height:5px;width:'+Math.min(p,100)+'%"></div></div></div>';
+  }
+  function periodoTxt(it) { return fmtMesAno(it.s) + ' → ' + fmtMesAno(parseMonth(it.ex.fim)); }
+  function badgeS(txt, bg, col) {
+    return '<span style="background:'+bg+';color:'+col+';font-size:12px;font-weight:700;padding:3px 12px;border-radius:20px;margin-left:6px">'+txt+'</span>';
+  }
+
+  html += '<div class="chart-card" style="margin-bottom:20px">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px">';
+  html += '<div class="chart-title" style="margin-bottom:0">🚨 Areninhas em risco — inscrições × prazo</div><div>';
+  if (emRisco.length)   html += badgeS(emRisco.length + ' em risco', '#FEE2E2', '#991B1B');
+  if (emAtencao.length) html += badgeS(emAtencao.length + ' em atenção', '#FEF3C7', '#92400E');
+  html += '</div></div>';
+  html += '<div style="font-size:12px;color:var(--ts);margin-bottom:12px">Esperado até hoje = meta de '+META_ARENINHA+' inscritos distribuída ao longo do período de cada areninha. ';
+  html += '<b>Em risco:</b> menos de 60% da meta com 50% ou mais do prazo decorrido. ';
+  html += '<b>Atenção:</b> meta atingida 10 p.p. ou mais abaixo do prazo decorrido (após 25% do prazo).</div>';
+
+  if (ritmoLista.length > 0) {
+    html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+    html += '<thead><tr>' + thS('Fase') + thS('Cidade') + thS('Período') + thS('Prazo decorrido','right') + thS('Meta atingida','right') + thS('Inscritos / esperado','right') + thS('Situação','center') + '</tr></thead><tbody>';
+    ritmoLista.forEach(function(it, i){
+      var risco = it.nivel === 'risco';
+      var bg = risco ? (i%2===0?'#FFF5F5':'#FFF8F8') : (i%2===0?'#FFFBEB':'#FFFDF5');
+      html += '<tr style="background:'+bg+'">';
+      html += '<td style="padding:7px 10px">' + pillS('Fase '+it.c.fase, risco?'#FEE2E2':'#FEF3C7', risco?'#991B1B':'#92400E') + '</td>';
+      html += '<td style="padding:7px 10px;font-weight:600;color:var(--tp)">'+it.c.name+'</td>';
+      html += '<td style="padding:7px 10px;color:var(--ts);white-space:nowrap">'+periodoTxt(it)+'</td>';
+      html += '<td style="padding:7px 10px">'+miniBar(it.tp, '#94A3B8')+'</td>';
+      html += '<td style="padding:7px 10px">'+miniBar(it.cp, barColor(it.cp))+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right;white-space:nowrap"><b>'+it.c.total+'</b> / '+it.esperado+'</td>';
+      html += '<td style="padding:7px 10px;text-align:center">' + (risco ? pillS('Em risco','#FEE2E2','#991B1B') : pillS('Atenção','#FEF3C7','#92400E')) + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+  } else {
+    html += '<div style="background:#D1FAE5;color:#065F46;border-radius:8px;padding:12px 14px;font-size:13px">Nenhuma areninha em andamento está abaixo do ritmo esperado para o prazo.</div>';
+  }
+
+  if (semPeriodo.length > 0) {
+    html += '<div style="margin-top:12px;font-size:12px;color:var(--ts)">🗓️ <b>'+semPeriodo.length+' areninha'+(semPeriodo.length>1?'s':'')+' sem período informado</b> '
+      + 'não '+(semPeriodo.length>1?'entram':'entra')+' nesta análise: '
+      + semPeriodo.map(function(c){ return c.name+' (F'+c.fase+')'; }).join(', ')
+      + '. Informe início e fim em cada fase (✏️).</div>';
+  }
+  html += '</div>';
+
+  // Prazos próximos
+  html += '<div class="chart-card" style="margin-bottom:20px">';
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px">';
+  html += '<div class="chart-title" style="margin-bottom:0">⏳ Prazos próximos — encerram em até '+JANELA_PRAZO+' dias</div><div>';
+  if (prazosProximos.length) html += badgeS(prazosProximos.length + ' areninha' + (prazosProximos.length>1?'s':''), '#FEF3C7', '#92400E');
+  html += '</div></div>';
+  html += '<div style="font-size:12px;color:var(--ts);margin-bottom:12px">Areninhas em andamento, ordenadas pelo encerramento mais próximo, com o que ainda falta para a meta.</div>';
+
+  if (prazosProximos.length > 0) {
+    html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+    html += '<thead><tr>' + thS('Fase') + thS('Cidade') + thS('Termina em') + thS('Faltam','right') + thS('Inscritos','right') + thS('Faltam p/ meta','right') + thS('% Meta','right') + '</tr></thead><tbody>';
+    prazosProximos.forEach(function(it, i){
+      var falta = Math.max(0, META_ARENINHA - it.c.total);
+      html += '<tr style="border-bottom:1px solid var(--border)">';
+      html += '<td style="padding:7px 10px;color:var(--ts)">Fase '+it.c.fase+'</td>';
+      html += '<td style="padding:7px 10px;font-weight:600;color:var(--tp)">'+it.c.name+'</td>';
+      html += '<td style="padding:7px 10px;white-space:nowrap">'+fmtMesAno(parseMonth(it.ex.fim))+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right;white-space:nowrap">'+it.dias+(it.dias===1?' dia':' dias')+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right">'+it.c.total+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right;font-weight:700;color:'+(falta>0?'#9B1C1C':'#0A6B4A')+'">'+(falta>0?falta:'meta atingida')+'</td>';
+      html += '<td style="padding:7px 10px;text-align:right;font-weight:700;color:'+textColor(it.cp)+'">'+it.cp+'%</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+  } else {
+    html += '<div style="background:#F3F4F6;border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ts)">Nenhuma areninha em andamento encerra nos próximos '+JANELA_PRAZO+' dias.</div>';
   }
   html += '</div>';
 
